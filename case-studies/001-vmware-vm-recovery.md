@@ -1,252 +1,428 @@
-# Case Study 001 — VMware Linux Virtual Machine Recovery
+# Case Study 001 — VMware ESXi Linux VM Recovery
 
-**Category:** Infrastructure Troubleshooting  
-**Platform:** VMware vSphere / ESXi  
-**Guest Operating System:** Linux  
-**Environment:** Remote, non-production infrastructure  
+**Category:** Virtualization / Infrastructure Troubleshooting  
+**Platform:** VMware ESXi / vSphere Host Client  
+**Guest Operating System:** Ubuntu Linux  
+**Environment:** Remote, non-production technical assessment  
 **Assessment Date:** November 4, 2026  
-**Outcome:** Virtual machine successfully registered and booted
+**Outcome:** VM registered, virtual disk configuration repaired, and Ubuntu successfully booted
 
 ---
 
 ## 1. Executive Summary
 
-During a time-limited remote infrastructure troubleshooting assessment, I was tasked with recovering an existing Linux virtual machine in a VMware-managed environment.
+During a remote infrastructure technical assessment, I was tasked with registering an existing Linux virtual machine in VMware ESXi and ensuring it could power on successfully.
 
-The objective was to register the virtual machine and restore its ability to boot using existing infrastructure resources.
+The virtual machine's files already existed on an ESXi datastore, but the VM was not registered in the hypervisor inventory.
 
-The exercise became more complicated when the VMware web client's virtual disk attachment interface displayed unexpectedly small or blank controls, preventing straightforward interaction.
+After locating and registering its existing `.vmx` configuration, I attempted to power on the machine. The startup failed because the configuration referenced a virtual disk filename that did not exist.
 
-Rather than relying exclusively on the graphical interface, I used SSH to investigate the underlying virtual disk and configuration.
+The recovery was complicated by the ESXi web client's disk attachment controls, which appeared blank and abnormally small when attempting to attach the correct existing disk.
 
-After correcting the configuration, I successfully registered and booted the Linux virtual machine.
+Rather than rebuilding the VM or modifying its virtual disk contents, I used SSH through PuTTY to inspect the datastore, validate the VMDK disk chain, back up the VM configuration, and restore the correct disk attachment.
 
-This case study documents the troubleshooting challenge, observed behavior, alternative management approaches, and lessons learned.
+After reloading the configuration, the VM powered on successfully and Ubuntu reached its login prompt.
+
+This case study documents the investigation, underlying configuration issue, recovery commands, and verified outcome.
 
 ## 2. Environment Overview
 
 | Component | Description |
 |---|---|
 | Hypervisor | VMware ESXi |
-| Management interface | VMware web client |
-| Guest OS | Linux |
-| Storage | Existing VMware virtual disk |
-| Remote access | SSH |
-| Environment type | Non-production technical assessment |
-| Administrative workstation | Windows |
+| Management interface | ESXi Host Client |
+| Guest OS | Ubuntu Linux |
+| VM identifier | `ubuntu1804` |
+| Datastore | `datastore1` |
+| Virtual disk | VMDK |
+| Virtual SCSI controller | SCSI 0:0 |
+| Administrative access | Windows RDP session and PuTTY SSH |
+| Environment | Non-production technical assessment |
 
-The environment was accessed remotely.
+The administrative workflow involved remotely accessing a Windows management machine, opening the ESXi web interface, and subsequently establishing SSH access directly to the ESXi host.
 
-Original IP addresses and organization identifiers are intentionally omitted.
+Original hostnames, IP addresses, organization identifiers, and credentials have been omitted.
 
-Where examples are needed, addresses from the documentation-only `192.0.2.0/24` range are used.
+## 3. Assessment Objective
 
-## 3. Problem Description
+The assigned task was to:
 
-The assigned task required an existing Linux virtual machine to be registered and started successfully.
+1. Locate an existing Linux virtual machine stored alongside an already registered Windows VM.
+2. Register the Linux VM with ESXi.
+3. Power on the VM.
+4. Verify successful startup.
 
-An existing virtual disk was involved in the recovery process.
+The goal was recovery of the existing virtual machine, not installation of a new operating system.
 
-During troubleshooting, the VMware web client exhibited unusual rendering behavior while attaching the existing disk.
+Preserving the existing virtual disk was therefore an important consideration.
 
-Interface controls appeared blank or abnormally small, making the expected disk-selection workflow difficult to complete.
+## 4. Discovering the Virtual Machine
 
-The graphical interface issue became an additional obstacle separate from the VM recovery task itself.
+The Linux VM was initially absent from the ESXi virtual machine inventory.
 
-### Observed Symptoms
+Using the ESXi Host Client datastore browser, I navigated to the datastore containing the existing virtual machine files.
 
-- Existing Linux VM required registration and recovery.
-- Virtual disk configuration required investigation.
-- VMware disk attachment controls were difficult to operate because of unexpected UI rendering.
-- A command-line approach was needed to continue investigating.
-- Successful registration and boot were required to complete the task.
+The relevant directory was:
 
-## 4. Troubleshooting Approach
+```text
+/vmfs/volumes/datastore1/ubuntu1804/
+```
 
-### Phase 1 — Examine the VMware Environment
+The directory contained the VM configuration file:
 
-The initial objective was to determine how the existing VM and its associated disk could be recovered.
+```text
+ubuntu1804.vmx
+```
 
-Important considerations included:
+The existing VM configuration was registered through the ESXi interface.
 
-- Location of the existing VM configuration
-- Location of the virtual disk
-- Virtual disk association
-- VM registration status
-- Compatibility of the VM configuration with the target ESXi host
+Registration succeeded.
 
-These considerations help distinguish VM registration issues from storage problems and guest operating system boot failures.
+However, attempting to power on the machine produced an error involving a missing virtual disk.
 
-### Phase 2 — Investigate the Virtual Disk
+## 5. Finding 1 — Invalid Virtual Disk Reference
 
-The VMware web client did not behave as expected during the process of attaching an existing virtual disk.
+The registered VM configuration referenced:
 
-Rather than continuing to rely on the malfunctioning interface, I used SSH to inspect the environment.
+```text
+ubuntu1804-file.vmdk
+```
 
-This provided an alternate method of investigating the virtual disk and its configuration.
+However, the existing virtual disk was named:
 
-The purpose of the command-line investigation was to establish whether the necessary VM storage resources were present and how they related to the intended virtual machine configuration.
+```text
+ubuntu1804.vmdk
+```
 
-### Phase 3 — Correct the Configuration
+This mismatch prevented ESXi from opening the configured virtual disk during startup.
 
-Following the SSH investigation, I corrected the configuration necessary for the existing Linux VM to register and boot.
+### Technical Interpretation
 
-The precise configuration change is not reproduced here because the original command history has not been preserved in this case study.
+A VMware `.vmx` file defines the virtual machine's hardware configuration, including the virtual disks associated with its controllers.
 
-The confirmed outcome was successful VM registration and startup.
+For example:
 
-### Phase 4 — Validate Recovery
+```ini
+scsi0:0.present = "TRUE"
+scsi0:0.fileName = "ubuntu1804-file.vmdk"
+scsi0:0.deviceType = "scsi-hardDisk"
+```
 
-The final validation established that:
+The filename in the original configuration did not match the existing disk.
 
-- The virtual machine was successfully registered.
-- The VM could be powered on.
-- The Linux guest reached a bootable state.
+The appropriate recovery was to restore the correct association, not to create a replacement disk.
 
-This satisfied the recovery objective.
+## 6. Attempted Recovery Through the ESXi Web Client
 
-Additional guest-level application health checks were outside the confirmed outcome documented here.
+The initial approach was to correct the disk attachment through the graphical management interface.
 
-## 5. VMware Diagnostic Reference
+The intended workflow was:
 
-The following commands are useful when investigating comparable VMware ESXi environments.
+1. Open the VM's hardware configuration.
+2. Remove the invalid virtual disk reference.
+3. Preserve the underlying datastore files.
+4. Select **Add hard disk → Existing hard disk**.
+5. Choose the existing `ubuntu1804.vmdk`.
+6. Attach it to SCSI controller 0 at SCSI 0:0.
 
-**These are reference commands, not a claim that each command was executed during the original assessment.**
+However, the disk attachment editor exhibited unexpected behavior.
 
-### Identify Available Virtual Machines
+Several controls were blank or abnormally narrow, and the interface did not reliably display the selected disk's controller and capacity information.
+
+Browser zoom adjustment, refreshing the interface, and retrying the attachment did not resolve the behavior.
+
+The invalid disk attachment was removed without deleting datastore files, but the existing disk could not be reliably reattached through the web editor.
+
+This prompted a command-line investigation.
+
+## 7. Investigating the Existing VMDK
+
+The existing disk descriptor was examined.
+
+It referenced a backing file:
+
+```text
+RW 33554432 VMFS "ubuntu1804-flat.vmdk"
+```
+
+This describes a virtual disk with 33,554,432 sectors.
+
+Assuming 512-byte sectors, the provisioned capacity is 16 GiB.
+
+The datastore also contained the corresponding backing file.
+
+### Why This Mattered
+
+VMware virtual disks may consist of a small descriptor and a larger backing extent.
+
+The descriptor contains information about the disk's layout and associated data files.
+
+Finding a valid descriptor is useful, but it does not independently guarantee that the full disk chain is intact.
+
+Additional validation was required before modifying the VM configuration.
+
+## 8. Switching to ESXi SSH
+
+Because the web client was not reliably populating the disk attachment controls, I used PuTTY from the remote Windows management environment to establish an SSH session with the ESXi host.
+
+This provided direct access to the hypervisor's filesystem and management utilities.
+
+### Inspect Datastore Contents
+
+```bash
+ls -lh /vmfs/volumes/datastore1/ubuntu1804/
+```
+
+The inspection confirmed that the existing virtual disk and its backing file were present.
+
+### Inspect the VM Configuration
+
+```bash
+cat /vmfs/volumes/datastore1/ubuntu1804/ubuntu1804.vmx
+```
+
+The configuration inspection showed that the VM retained its SCSI controller configuration but no longer had an attached hard disk after the unsuccessful graphical editing attempts.
+
+The next objective was to verify the existing disk before restoring its reference.
+
+## 9. Finding 2 — Existing Virtual Disk Was Consistent
+
+The VMDK chain was checked using ESXi's `vmkfstools` utility:
+
+```bash
+vmkfstools -e /vmfs/volumes/datastore1/ubuntu1804/ubuntu1804.vmdk
+```
+
+Result:
+
+```text
+Disk chain is consistent.
+```
+
+This was a critical finding.
+
+It indicated that VMware could validate the existing virtual disk chain, reducing the likelihood that rebuilding or replacing the disk was necessary.
+
+The problem was therefore narrowed to the VM's virtual disk association rather than a demonstrated disk-chain inconsistency.
+
+## 10. Identifying the VM and Verifying Its State
+
+The registered virtual machines were listed:
 
 ```bash
 vim-cmd vmsvc/getallvms
 ```
 
-Lists registered virtual machines and their configuration paths.
+The recovered transcript identified the Ubuntu VM with numeric ID:
 
-### Examine Datastore Contents
-
-```bash
-ls -lah /vmfs/volumes/
+```text
+9
 ```
 
-Displays mounted datastore paths and symbolic links.
+The VM's power state was then checked:
 
 ```bash
-find /vmfs/volumes/ -name "*.vmx"
+vim-cmd vmsvc/power.getstate 9
 ```
 
-Searches for virtual machine configuration files.
+This was part of the preparation for safely correcting the VM configuration while the machine was powered off.
+
+The confirmed repair sequence included creating a backup before making the targeted change.
+
+## 11. Correcting the VMX Configuration
+
+The recovery was performed directly through the ESXi command line.
+
+### Step 1 — Navigate to the VM Directory
 
 ```bash
-find /vmfs/volumes/ -name "*.vmdk"
+cd /vmfs/volumes/datastore1/ubuntu1804
 ```
 
-Searches for VMware virtual disk descriptor and extent files.
-
-### Examine Virtual Disk Metadata
+### Step 2 — Back Up the Existing Configuration
 
 ```bash
-vmkfstools -e /vmfs/volumes/<datastore>/<vm>/<disk>.vmdk
+cp -p ubuntu1804.vmx ubuntu1804.vmx.before-disk-fix
 ```
 
-Checks virtual disk chain consistency where supported.
+This preserved a copy of the current configuration before the disk attachment was restored.
+
+### Step 3 — Restore the Existing Disk Reference
+
+The following configuration entries were appended to the VMX file:
 
 ```bash
-grep -iE 'fileName|scsi|sata|ide' \
-  /vmfs/volumes/<datastore>/<vm>/<vm>.vmx
+cat >> ubuntu1804.vmx <<'EOF'
+scsi0:0.present = "TRUE"
+scsi0:0.fileName = "ubuntu1804.vmdk"
+scsi0:0.deviceType = "scsi-hardDisk"
+EOF
 ```
 
-Displays virtual disk and controller-related VMX configuration entries.
+These entries associated the existing virtual disk with the VM at SCSI 0:0.
 
-### Register an Existing VM
+The `>>` operator appended text to the configuration file rather than overwriting its existing contents.
+
+This operation was appropriate to the observed state of this specific VM configuration. It is not intended as a universal repair procedure for all VMware disk attachment problems.
+
+### Step 4 — Reload the VM Configuration
 
 ```bash
-vim-cmd solo/registervm \
-  /vmfs/volumes/<datastore>/<vm>/<vm>.vmx
+vim-cmd vmsvc/reload 9
 ```
 
-Registers an existing virtual machine configuration with ESXi.
+Reloading instructed ESXi to reread the modified virtual machine configuration.
 
-This command is included for reference only. VM registration should be performed after verifying that the configuration and associated disks are correct.
+### Step 5 — Power On the VM
 
-## 6. Troubleshooting Analysis
+```bash
+vim-cmd vmsvc/power.on 9
+```
 
-Several independent layers can affect successful virtual machine recovery:
+The power-on operation returned without an error in the documented session.
 
-| Layer | Potential issue |
-|---|---|
-| Management interface | UI rendering or interaction failure |
-| Inventory | VM not registered |
-| Configuration | Incorrect virtual hardware or disk association |
-| Storage | Missing or inaccessible virtual disk |
-| Guest OS | Bootloader or operating system startup failure |
+## 12. Recovery Verification
 
-A failure at one layer should not automatically be attributed to another.
+After the configuration repair, the VM's operational state was checked.
 
-For example, a virtual disk attachment control behaving incorrectly in a web browser does not establish that the underlying VMDK is corrupt.
+```bash
+vim-cmd vmsvc/power.getstate 9
+```
 
-Similarly, a VM appearing in inventory does not guarantee that the guest operating system can boot.
+The VM was also inspected through the ESXi Host Client console.
 
-Separating these layers helps prevent unnecessary configuration changes during troubleshooting.
+### Confirmed Results
 
-## 7. Results
+- The VM remained registered in ESXi.
+- The existing VMDK was correctly associated with the VM.
+- The VM powered on successfully.
+- Ubuntu reached its login prompt.
+- Cloud-init completed.
+- The ESXi web client subsequently displayed the attached disk as a 16 GB, thin-provisioned VMDK on SCSI 0:0.
 
-| Objective | Result |
-|---|---|
-| Investigate VM registration issue | Completed |
-| Investigate virtual disk configuration | Completed |
-| Work around web-client interface issue | Completed |
-| Register existing Linux VM | Successful |
-| Boot Linux VM | Successful |
-| Establish exact cause of UI rendering issue | Not confirmed |
+The guest operating system was successfully booted without rebuilding the VM or replacing its disk contents.
 
-### Confirmed Outcome
+## 13. Additional Finding — Web Client Behavior
 
-The Linux virtual machine was successfully registered and booted following configuration troubleshooting performed through the VMware environment and SSH.
+The ESXi web client initially displayed blank, abnormally small disk-attachment controls.
 
-The exact root cause of the graphical interface rendering problem was not established.
+The exact technical cause was not established during the assessment.
 
-## 8. Lessons Learned
+After the VMX configuration was corrected and reloaded, the web client displayed the existing virtual disk information normally.
 
-### Graphical Interfaces Are Not the Only Management Path
+The interviewer later confirmed that the unusual interface behavior was intentional as part of the exercise.
 
-When infrastructure management interfaces behave unexpectedly, command-line access can provide additional diagnostic visibility.
+However, this confirmation does not establish the specific mechanism used to produce the interface behavior.
 
-### Separate Symptoms from Root Causes
+The important troubleshooting lesson was that an unreliable management interface should not be confused with evidence of damaged virtual disk contents.
 
-A malfunctioning browser interface, a misconfigured VM, and an inaccessible disk are different potential problems.
+## 14. Root Cause Analysis
 
-Treating them independently reduces unnecessary troubleshooting steps.
+### Primary Fault
 
-### Preserve Existing Virtual Machine Storage
+The VM configuration referenced a nonexistent virtual disk:
 
-When recovering an existing VM, investigate configuration and disk associations before considering destructive storage changes.
+```text
+ubuntu1804-file.vmdk
+```
 
-### Verify the Actual Recovery Objective
+The existing disk was:
 
-Successful registration alone is not sufficient when the assigned objective includes booting the virtual machine.
+```text
+ubuntu1804.vmdk
+```
 
-The recovery should be validated against the expected operational state.
+This prevented the VM from booting successfully after registration.
 
-### Document Both Successes and Uncertainties
+### Additional Complication
 
-The VM recovery was successful, but the precise cause of the web-client rendering issue remains unconfirmed.
+The graphical disk-attachment workflow did not reliably populate the necessary controls.
 
-Recording that distinction produces more defensible technical documentation.
+After unsuccessful attempts through the web interface, SSH-based inspection and configuration recovery provided an alternative management path.
 
-## 9. Potential Follow-Up Lab
+### Resolution
 
-A reproducible version of this exercise could be developed in a personally controlled VMware environment.
+The existing virtual disk was validated, its reference restored in the VMX configuration, and the virtual machine configuration reloaded.
 
-The lab would involve:
+The VM subsequently powered on and booted successfully.
 
-- Creating a Linux VM and existing virtual disk
-- Simulating a VM inventory or configuration problem
-- Investigating the VM through command-line management tools
-- Restoring the configuration
-- Verifying registration and guest boot
-- Recording troubleshooting output and recovery evidence
+## 15. Troubleshooting Summary
 
-This would allow the diagnostic workflow to be demonstrated independently of the original assessment environment.
+| Stage | Action | Result |
+|---|---|---|
+| Discovery | Located `ubuntu1804.vmx` | Existing VM found |
+| Registration | Registered VM in ESXi | Successful |
+| Initial startup | Attempted power-on | Failed |
+| Error investigation | Inspected disk reference | Incorrect VMDK filename |
+| GUI remediation | Attempted existing-disk attachment | Controls failed to populate |
+| Disk inspection | Examined VMDK descriptor and backing file | Existing disk identified |
+| ESXi SSH | Inspected datastore and VMX | Disk association absent |
+| Disk validation | Executed `vmkfstools -e` | Disk chain consistent |
+| Configuration backup | Copied VMX file | Backup created |
+| Repair | Restored SCSI 0:0 VMDK reference | Configuration corrected |
+| Reload | Executed `vim-cmd vmsvc/reload` | Configuration reloaded |
+| Recovery | Powered on VM | Successful |
+| Validation | Inspected VM console | Ubuntu login prompt displayed |
+
+## 16. Technical Lessons Learned
+
+### Registration Is Not the Same as Recovery
+
+Registering an existing VM adds it to ESXi's inventory, but does not guarantee that its referenced disks and hardware configurations are valid.
+
+### Validate Existing Storage Before Replacing It
+
+The VMDK descriptor and backing file existed, and the disk-chain validation passed.
+
+This supported a targeted configuration repair rather than unnecessary disk reconstruction.
+
+### Management Interface Failures Can Obscure Simple Problems
+
+The graphical editor introduced an additional troubleshooting obstacle.
+
+SSH access allowed the underlying VM configuration to be examined independently.
+
+### Back Up Configuration Before Editing
+
+Creating a VMX backup provided a recovery point before modifying virtual hardware references.
+
+### Verify the Operating System Actually Boots
+
+A successful registration or power-on command alone does not establish that the guest OS is operational.
+
+The final Ubuntu console verification was necessary to confirm the assigned recovery objective.
+
+### Troubleshooting Is About Isolating Faults
+
+The underlying repair required only restoring the correct virtual disk association.
+
+The difficult part was identifying the mismatch, proving the existing disk was intact, and working around an unreliable management interface.
+
+## 17. Outcome
+
+The assessment objective was completed.
+
+The existing Linux VM was registered, its incorrect virtual disk reference was repaired, and the guest successfully booted.
+
+The recovery preserved the original virtual disk contents and avoided reinstalling the operating system.
+
+This exercise demonstrated practical VMware administration involving datastore investigation, VMX configuration, virtual disk validation, SSH management, and recovery verification.
+
+## 18. Future Lab Reproduction
+
+A similar scenario can be reproduced in a personally controlled VMware environment.
+
+Potential exercises include:
+
+- Unregistering and re-registering an existing VM
+- Simulating an invalid virtual disk reference
+- Inspecting VMX configuration files
+- Validating virtual disk chains
+- Restoring disk associations
+- Confirming successful guest startup
+
+Independent reproduction would provide additional screenshots and command output without relying on the original assessment infrastructure.
 
 ---
 
-**Case Study Status:** Completed assessment; recovery outcome confirmed. Supplemental command-line reproduction and screenshots may be added in future revisions.
+**Case Study Status:** Completed. Root cause, remediation, and successful guest boot documented from the recovered assessment transcript.
